@@ -50,8 +50,8 @@ MAIN_KB = InlineKeyboardMarkup(inline_keyboard=[
 BACK_KB = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="back_to_main")]])
 
 PLATFORM_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="📱 Android", callback_data="platform_android")],
-    [InlineKeyboardButton(text="🍎 Apple", callback_data="platform_apple")],
+    [InlineKeyboardButton(text="Android", callback_data="platform_android")],
+    [InlineKeyboardButton(text="Apple", callback_data="platform_apple")],
     [InlineKeyboardButton(text="Назад", callback_data="back_to_main")]
 ])
 
@@ -201,7 +201,7 @@ async def handle_file(msg: Message, state: FSMContext):
         await bot.download_file(f.file_path, fb)
         fb.seek(0)
         
-        platform_emoji = "📱 Android" if platform == 'android' else "🍎 Apple"
+        platform_emoji = "Android" if platform == 'android' else "Apple"
         user_info = f"Файл от пользователя:\nПлатформа: {platform_emoji}\nID: {msg.from_user.id}\nUsername: @{msg.from_user.username or 'Не указан'}\nИмя: {msg.from_user.full_name}\nФайл: {doc.file_name}"
         
         async def send_admin():
