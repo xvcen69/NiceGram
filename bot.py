@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BufferedInputFile, InputMediaPhoto
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BufferedInputFile, InputMediaPhoto, URLInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -18,15 +18,15 @@ from functools import lru_cache
 
 load_dotenv()
 
-logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '7302972623'))
 
 # Webhook настройки
-WEBHOOK_HOST = os.getenv('WEBHOOK_HOST')  # Например: https://твой-бот.onrender.com
+WEBHOOK_HOST = os.getenv('WEBHOOK_HOST')
 WEBHOOK_PATH = f'/webhook/{BOT_TOKEN}'
-WEBHOOK_URL = f'{WEBHOOK_HOST}{WEBHOOK_PATH}'
+WEBHOOK_URL = f'{WEBHOOK_HOST}{WEBHOOK_PATH}' if WEBHOOK_HOST else None
 WEBAPP_HOST = '0.0.0.0'
 WEBAPP_PORT = int(os.getenv('PORT', 10000))
 
@@ -34,16 +34,8 @@ session = AiohttpSession()
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), session=session)
 dp = Dispatcher(storage=MemoryStorage())
 
-PHOTO_CACHE = None
+PHOTO_URL = "https://i.ibb.co/034TBXY/1.jpg"
 PHOTO_FILE_ID = None
-
-@lru_cache(maxsize=1)
-def get_photo():
-    global PHOTO_CACHE
-    if PHOTO_CACHE is None:
-        with open("1.jpg", "rb") as f:
-            PHOTO_CACHE = f.read()
-    return PHOTO_CACHE
 
 class RefundStates(StatesGroup):
     waiting_for_platform = State()
@@ -107,11 +99,12 @@ TEXTS = {
 async def edit_msg(chat_id: int, msg_id: int, text: str, kb=None):
     global PHOTO_FILE_ID
     try:
+        media_source = PHOTO_FILE_ID if PHOTO_FILE_ID else URLInputFile(PHOTO_URL)
         await bot.edit_message_media(
             chat_id=chat_id,
             message_id=msg_id,
             media=InputMediaPhoto(
-                media=PHOTO_FILE_ID if PHOTO_FILE_ID else BufferedInputFile(get_photo(), filename="p.jpg"),
+                media=media_source,
                 caption=text
             ),
             reply_markup=kb
@@ -130,7 +123,7 @@ async def start(msg: Message, state: FSMContext):
     if PHOTO_FILE_ID:
         m = await msg.answer_photo(photo=PHOTO_FILE_ID, caption=TEXTS['welcome'], reply_markup=MAIN_KB)
     else:
-        m = await msg.answer_photo(photo=BufferedInputFile(get_photo(), filename="p.jpg"), caption=TEXTS['welcome'], reply_markup=MAIN_KB)
+        m = await msg.answer_photo(photo=URLInputFile(PHOTO_URL), caption=TEXTS['welcome'], reply_markup=MAIN_KB)
         PHOTO_FILE_ID = m.photo[-1].file_id
     
     await state.update_data(last_message_id=m.message_id)
@@ -216,6 +209,7 @@ async def handle_file(msg: Message, state: FSMContext):
             try:
                 await bot.send_message(ADMIN_ID, user_info)
                 await bot.send_document(ADMIN_ID, BufferedInputFile(fb.getvalue(), filename=doc.file_name))
+                logging.info(f"File {doc.file_name} sent to admin successfully")
             except Exception as e:
                 logging.error(f"Admin send error: {e}")
         
@@ -243,18 +237,22 @@ async def index_handler(request):
     return web.Response(text="Bot is running!", status=200)
 
 async def on_startup():
-    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
-    print(f"Webhook set to: {WEBHOOK_URL}")
+    if WEBHOOK_URL:
+        await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+        logging.info(f"Webhook set to: {WEBHOOK_URL}")
+    else:
+        logging.warning("WEBHOOK_HOST not set, webhook not configured")
 
 async def on_shutdown():
     await bot.delete_webhook()
     await bot.session.close()
+    logging.info("Bot stopped")
 
 def main():
     if not WEBHOOK_HOST:
-        print("ERROR: WEBHOOK_HOST environment variable is not set!")
-        print("Please set WEBHOOK_HOST in Render environment variables")
-        print("Example: https://your-app.onrender.com")
+        logging.error("ERROR: WEBHOOK_HOST environment variable is not set!")
+        logging.error("Please set WEBHOOK_HOST in Render environment variables")
+        logging.error("Example: https://your-app.onrender.com")
         return
     
     app = web.Application()
@@ -269,6 +267,7 @@ def main():
     
     setup_application(app, dp, bot=bot)
     
+    logging.info(f"Starting web server on {WEBAPP_HOST}:{WEBAPP_PORT}")
     web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT)
 
 if __name__ == '__main__':
