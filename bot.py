@@ -239,6 +239,9 @@ async def wrong_file(msg: Message, state: FSMContext):
         error_text = TEXTS['error_zip'] if platform == 'android' else TEXTS['error_txt']
         await edit_msg(msg.chat.id, d['last_message_id'], error_text, BACK_KB)
 
+async def index_handler(request):
+    return web.Response(text="Bot is running!", status=200)
+
 async def on_startup():
     await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
     print(f"Webhook set to: {WEBHOOK_URL}")
@@ -248,7 +251,15 @@ async def on_shutdown():
     await bot.session.close()
 
 def main():
+    if not WEBHOOK_HOST:
+        print("ERROR: WEBHOOK_HOST environment variable is not set!")
+        print("Please set WEBHOOK_HOST in Render environment variables")
+        print("Example: https://your-app.onrender.com")
+        return
+    
     app = web.Application()
+    
+    app.router.add_get('/', index_handler)
     
     webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
     webhook_handler.register(app, path=WEBHOOK_PATH)
