@@ -9,11 +9,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 import os
 from dotenv import load_dotenv
 from io import BytesIO
 from functools import lru_cache
-from aiohttp import web
 
 load_dotenv()
 
@@ -21,6 +22,13 @@ logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '7302972623'))
+
+# Webhook настройки
+WEBHOOK_HOST = os.getenv('WEBHOOK_HOST')  # Например: https://твой-бот.onrender.com
+WEBHOOK_PATH = f'/webhook/{BOT_TOKEN}'
+WEBHOOK_URL = f'{WEBHOOK_HOST}{WEBHOOK_PATH}'
+WEBAPP_HOST = '0.0.0.0'
+WEBAPP_PORT = int(os.getenv('PORT', 10000))
 
 session = AiohttpSession()
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), session=session)
@@ -231,24 +239,26 @@ async def wrong_file(msg: Message, state: FSMContext):
         error_text = TEXTS['error_zip'] if platform == 'android' else TEXTS['error_txt']
         await edit_msg(msg.chat.id, d['last_message_id'], error_text, BACK_KB)
 
-async def health(request):
-    return web.Response(text="Bot is running!")
+async def on_startup():
+    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+    print(f"Webhook set to: {WEBHOOK_URL}")
 
-async def main():
+async def on_shutdown():
+    await bot.delete_webhook()
+    await bot.session.close()
+
+def main():
     app = web.Application()
-    app.router.add_get('/', health)
-    app.router.add_get('/health', health)
     
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
-    await site.start()
+    webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_handler.register(app, path=WEBHOOK_PATH)
     
-    try:
-        await dp.start_polling(bot, skip_updates=True)
-    finally:
-        await bot.session.close()
-        await runner.cleanup()
+    app.on_startup.append(lambda app: on_startup())
+    app.on_shutdown.append(lambda app: on_shutdown())
+    
+    setup_application(app, dp, bot=bot)
+    
+    web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
